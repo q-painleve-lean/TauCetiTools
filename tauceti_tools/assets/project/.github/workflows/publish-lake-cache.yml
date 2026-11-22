@@ -83,7 +83,6 @@ jobs:
             tauceti_tools/assets/scripts/lake_cache_publish.py
             tauceti_tools/assets/scripts/ci_publication_observation.py
             tauceti_tools/assets/scripts/lake_cache_probe.py
-            tauceti_tools/assets/scripts/lake_cache_reuse.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
