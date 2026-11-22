@@ -222,6 +222,13 @@ jobs:
           PUBLIC_REVISION_ENDPOINT: ${{ vars.LAKE_CACHE_REVISION_ENDPOINT_PUBLIC }}
         run: bash scripts/lake-cache-get.sh .
 
+      # Pinned upstream packages (an `[[upstreams]]` entry with cache endpoints) restore from
+      # their own public caches, as in pr-build. Without it main compiles all of each such package
+      # on every push. The root package is never restored here: main stays the from-source build
+      # that CI bundles and published caches come from.
+      - name: Fetch pinned upstream packages' oleans from their Lake caches
+        run: python3 scripts/dependency-cache-get.py .
+
       - name: Audit import headers against the complete source inventory
         run: python3 scripts/check-imports.py
 
@@ -304,6 +311,23 @@ jobs:
       # artifacts, and publish-lake-cache below, a fresh runner with only a sparse pin/helper
       # checkout and no project workspace, is the only place the key exists. The helper stays
       # inert until the key-bearing step has exited.
+      # `[services.cache] ci_bundle = true`: save this commit's own outputs for PR, merge-queue and
+      # full-lint builds to restore (lake-cache-bundle.sh). Only this trusted post-merge build
+      # writes bundles; the prune-lake-bundles job keeps the newest three.
+      - name: Pack this commit's own oleans into a CI bundle
+        id: lake_bundle
+        if: ${{ env.TAUCETI_CACHE_CI_BUNDLE == '1' }}
+        continue-on-error: true
+        run: bash scripts/lake-cache-bundle.sh save . "$RUNNER_TEMP/lake-bundle"
+
+      - name: Save the CI bundle
+        if: ${{ steps.lake_bundle.outputs.saved == 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/lake-bundle
+          key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-${{ github.sha }}
+
       - name: Configure the Lake cache staging (no-op unless the S3 endpoints are set)
         id: cachecfg
         env:
@@ -421,6 +445,24 @@ jobs:
   # Run the secret-bearing upload on a fresh runner through the same hardened publisher used
   # by merge-group CI. Main publication remains a fallback: merge groups normally publish the
   # exact commit before landing, while this covers human-owned changes and operational retries.
+  prune-lake-bundles:
+    # Keep the newest three CI bundles; older ones only take repository cache space. This job runs
+    # no project code, so it alone holds the token that can delete caches.
+    needs: build
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete all but the newest three CI bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh cache list --repo "$REPO" --key lake-bundle-v2- --sort created_at --order desc --limit 100 \
+            --json id --jq '.[3:][].id' | while read -r id; do gh cache delete "$id" --repo "$REPO"; done
+
   publish-lake-cache:
     needs: [build]
     if: ${{ needs.build.result == 'success' && needs.build.outputs.staged == 'true' }}

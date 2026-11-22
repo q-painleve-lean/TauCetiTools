@@ -172,6 +172,25 @@ jobs:
       # No aggregator check: the root TauCeti.lean is intentionally empty and imports nothing.
       # The build globs every TauCeti/ module directly, so nothing depends on a root that
       # re-exports the library.
+      # As in pr-build: pinned upstream packages from their own caches, then the root package's
+      # outputs from main's newest CI bundle (`[services.cache] ci_bundle = true`). Lake rebuilds
+      # whatever a restored record does not match.
+      - name: Fetch pinned upstream packages' oleans from their Lake caches
+        run: python3 scripts/dependency-cache-get.py .
+
+      - name: Restore the project's own oleans from main's CI bundle
+        id: lake_bundle
+        if: ${{ env.TAUCETI_CACHE_CI_BUNDLE == '1' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/lake-bundle
+          key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-
+
+      - name: Install main's CI bundle into the Lake cache
+        if: ${{ steps.lake_bundle.outputs.cache-matched-key != '' }}
+        run: bash scripts/lake-cache-bundle.sh restore . "$RUNNER_TEMP/lake-bundle"
+
       - name: Build
         env:
           # Restore only from the locally-populated $LAKE_CACHE_DIR the step above filled;

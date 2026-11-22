@@ -1481,6 +1481,24 @@ jobs:
         if: ${{ env.INFRA != '1' && env.WARM_TREE != '1' }}
         run: python3 gate/scripts/dependency-cache-get.py pr
 
+      # Restore the root package's own outputs from the newest bundle main CI saved for this
+      # toolchain and dependency pin (`[services.cache] ci_bundle = true`; lake-cache-bundle.sh).
+      # Only main's trusted from-source build saves bundles; this build only reads one, after the
+      # dependency caches and before any candidate code runs. Lake compares every module's input
+      # hash, so a PR rebuilds only what it changed and what depends on it. A miss builds as before.
+      - name: Restore the project's own oleans from main's CI bundle (GitHub cache; no PR code)
+        id: lake_bundle
+        if: ${{ env.INFRA != '1' && env.WARM_TREE != '1' && env.TAUCETI_CACHE_CI_BUNDLE == '1' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/lake-bundle
+          key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/lean-toolchain') }}-${{ hashFiles('pr/lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/lean-toolchain') }}-${{ hashFiles('pr/lake-manifest.json') }}-
+
+      - name: Install main's CI bundle into the Lake cache (no network; no PR code)
+        if: ${{ steps.lake_bundle.outputs.cache-matched-key != '' }}
+        run: bash gate/scripts/lake-cache-bundle.sh restore pr "$RUNNER_TEMP/lake-bundle"
+
       # A Bors/queue staging candidate is usually a tip the queue's repair worker built green on
       # its host (under the same bwrap sandbox) and published to the repair cache
       # ([services.repair_cache] in tauceti.toml), or that tip replayed onto a newer main, which
