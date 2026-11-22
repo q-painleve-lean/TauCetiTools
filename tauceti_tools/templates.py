@@ -149,6 +149,17 @@ def repair_cache_url(project: Project) -> str:
     return str(service.get("url", "")).rstrip("/")
 
 
+CI_DATA_URL = "https://ci-data.taucetiproject.org"
+
+
+def ci_data_url(project: Project) -> str:
+    """Tau Ceti's CI data service for Tau Ceti itself; empty for every other project.
+
+    The service is Tau Ceti's operations dashboard. Another project's CI must not send it
+    progress or telemetry, nor request an OIDC token for it."""
+    return CI_DATA_URL if project.legacy else ""
+
+
 def substitutions(project: Project, *, source_ci=False, qualified=False) -> list[tuple[str, str]]:
     """Render only trusted tool templates, never contributor/agent content."""
     root = project.roots[0]
@@ -227,6 +238,9 @@ def substitutions(project: Project, *, source_ci=False, qualified=False) -> list
         # The repair worker's cache, read by staging CI (lake-cache-services.sh). Off renders an
         # empty URL, which leaves the service undefined and the fetch a logged no-op.
         ("https://repair-cache.taucetiproject.org", repair_cache_url(project)),
+        # Tau Ceti's CI data service (live progress and telemetry). Off renders an empty URL, and
+        # the live progress reporter then runs its command unobserved.
+        (CI_DATA_URL, ci_data_url(project)),
         (
             'REPAIR_CACHE_SERVICE="tauceti-repair"',
             "REPAIR_CACHE_SERVICE=" + json.dumps(project.service("repair_cache").get("name", "tauceti-repair")),

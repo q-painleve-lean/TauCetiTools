@@ -306,6 +306,10 @@ def main(argv=None):
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("a sandbox launcher command is required")
+    if not ORIGIN:
+        # A project without the CI data service (rendered empty) reports nothing: become the
+        # launcher, so no OIDC token is requested and no reporter thread outlives the command.
+        os.execvp(command[0], command)
     child = subprocess.Popen(command)
     stop = threading.Event()
     # Forward cancellation to the existing launcher; reporter failure never changes its result.
