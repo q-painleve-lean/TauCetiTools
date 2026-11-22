@@ -214,6 +214,9 @@ class Project:
             "TAUCETI_CACHE_SERVICE": cache.get("name", self.key) if cache.get("mode") != "off" else "",
             "TAUCETI_CACHE_ARTIFACT_URL": cache.get("artifact_url", "") if cache.get("mode") != "off" else "",
             "TAUCETI_CACHE_REVISION_URL": cache.get("revision_url", "") if cache.get("mode") != "off" else "",
+            # Independent of the cache service mode: main CI saves the root package's outputs to
+            # one GitHub Actions cache bundle and PR, merge-queue and full-lint builds restore it.
+            "TAUCETI_CACHE_CI_BUNDLE": "1" if cache.get("ci_bundle") is True else "",
         }
 
     def environment(self) -> dict[str, str]:
