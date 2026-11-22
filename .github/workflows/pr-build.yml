@@ -1472,6 +1472,15 @@ jobs:
           LAKE_CACHE_BASE_REV: ${{ env.SOURCE_CANDIDATE != 'true' && steps.pr.outputs.base_sha || '' }}
         run: bash gate/scripts/lake-cache-get.sh pr
 
+      # Restore pinned upstream packages' oleans from their own public Lake caches, for each
+      # `[[upstreams]]` entry in the trusted tauceti.toml that names one (see
+      # dependency-cache-get.py). Without it a project that requires such a package compiles all
+      # of it from source on every build. Independent of the root package's own cache above; a
+      # miss or an incomplete fetch falls back to building from source.
+      - name: Fetch pinned upstream packages' oleans from their Lake caches (network, no token; no PR code)
+        if: ${{ env.INFRA != '1' && env.WARM_TREE != '1' }}
+        run: python3 gate/scripts/dependency-cache-get.py pr
+
       # A Bors/queue staging candidate is usually a tip the queue's repair worker built green on
       # its host (under the same bwrap sandbox) and published to the repair cache
       # ([services.repair_cache] in tauceti.toml), or that tip replayed onto a newer main, which
