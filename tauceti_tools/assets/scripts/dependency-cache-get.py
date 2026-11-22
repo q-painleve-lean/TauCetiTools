@@ -12,9 +12,10 @@ Usage: python3 scripts/dependency-cache-get.py <project-dir>
 
 The endpoints come only from the trusted project configuration (TAUCETI_UPSTREAMS), never from
 the candidate. The candidate's manifest supplies only the revision, and only for a package whose
-source is that upstream's repository. Anonymous reads; no token, no PR code. A miss or an
-incomplete fetch is not fatal: lake-cache-get.sh discards the cache, and the build compiles from
-source as it does without this step.
+source is that upstream's repository. Anonymous reads; no token, no PR code. A miss is not
+fatal: the build compiles the package from source as it does without this step. A fetch that
+stays incomplete after the retries keeps every verified artifact and drops only the mappings whose
+artifacts are missing, so only those modules build from source.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from urllib.parse import urlsplit
 SHA = re.compile(r"[0-9a-f]{40}")
 GET = Path(__file__).resolve().with_name("lake-cache-get.sh")
 DISABLE = ("LAKE_ARTIFACT_CACHE=false", "LAKE_RESTORE_ARTIFACTS=false", "LAKE_CACHE_DIR=")
+RETRY = {"LAKE_CACHE_ATTEMPTS": "5", "LAKE_CACHE_RETRY_DELAY": "30", "LAKE_CACHE_RETRY_GROWTH": "2",
+         "LAKE_CACHE_INCOMPLETE": "prune"}
 
 
 def endpoint(value):
@@ -90,7 +93,12 @@ def main(project: Path) -> None:
             github_env = Path(temporary) / "env"
             env = dict(os.environ, PUBLIC_ARTIFACT_ENDPOINT=artifacts, PUBLIC_REVISION_ENDPOINT=revisions,
                        TAUCETI_CACHE_REPOSITORY=repo, LAKE_CACHE_PACKAGE=name, LAKE_CACHE_BASE_REV=rev,
-                       LAKE_CACHE_MAX_REVS="1", LAKE_CACHE_DIR=str(cache), GITHUB_ENV=str(github_env))
+                       LAKE_CACHE_MAX_REVS="1", LAKE_CACHE_DIR=str(cache), GITHUB_ENV=str(github_env),
+                       # A public cache behind bot protection refuses bursts for a while. Keep every
+                       # verified artifact across attempts 30 s, 60 s, 120 s and 240 s apart, and if
+                       # some still never arrive, build only those modules rather than the whole
+                       # package (lake-cache-get.sh, LAKE_CACHE_INCOMPLETE=prune).
+                       **RETRY)
             try:
                 subprocess.run(["bash", str(GET), str(project)], env=env, check=True)
             except (OSError, subprocess.CalledProcessError) as error:

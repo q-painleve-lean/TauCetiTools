@@ -45,6 +45,21 @@ exit 2
 """
 
 
+KEPT, DROPPED = "a" * 16, "b" * 16
+# A stand-in `lake` whose transfers never complete: it installs KEPT's artifact and both mappings,
+# but never DROPPED's artifact.
+PARTIAL_LAKE = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_LAKE_ARGV"
+mkdir -p .lake/cache/outputs/Upstream .lake/cache/artifacts
+for h in """ + KEPT + " " + DROPPED + r"""; do
+  printf '{"schemaVersion":"2026-02-25","data":"%s.ltar"}' "$h" > ".lake/cache/outputs/Upstream/$h.json"
+done
+: > .lake/cache/artifacts/""" + KEPT + r""".ltar
+echo "error: failed to download some artifacts"
+exit 1
+"""
+
+
 class DependencyCache(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -93,6 +108,30 @@ class DependencyCache(unittest.TestCase):
         self.assertTrue(argv)
         self.assertIn("LAKE_ARTIFACT_CACHE=false", github_env)
         self.assertNotIn("LAKE_ARTIFACT_CACHE=true", github_env)
+
+    def test_incomplete_transfer_keeps_verified_artifacts_and_drops_only_missing_mappings(self):
+        # Every attempt installs one verified artifact but never the other, as when a CDN keeps
+        # refusing some downloads.
+        (self.root / "bin/lake").write_text(PARTIAL_LAKE)
+        out, argv, github_env, _ = self.run_get([UPSTREAM])
+        self.assertEqual(len(argv), 5, out)
+        self.assertIn("dropped 1 whose artifacts are missing", out)
+        outputs = self.root / "pr/.lake/cache/outputs/Upstream"
+        self.assertTrue((outputs / f"{KEPT}.json").exists())
+        self.assertFalse((outputs / f"{DROPPED}.json").exists())
+        self.assertTrue((self.root / f"pr/.lake/cache/artifacts/{KEPT}.ltar").exists())
+        self.assertIn("LAKE_ARTIFACT_CACHE=true", github_env)
+        self.assertNotIn("LAKE_ARTIFACT_CACHE=false", github_env)
+
+    def test_root_cache_still_discards_an_incomplete_transfer_by_default(self):
+        (self.root / "bin/lake").write_text(PARTIAL_LAKE)
+        (self.root / "pr/.lake/cache").mkdir(parents=True)
+        result = subprocess.run(["bash", str(self.root / "scripts/lake-cache-get.sh"), "pr"], cwd=self.root,
+                                env=dict(self.env, LAKE_CACHE_MAX_REVS="1"), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len((self.root / "argv").read_text().splitlines()), 3)
+        self.assertIn("LAKE_ARTIFACT_CACHE=false", (self.root / "env").read_text())
+        self.assertFalse((self.root / "pr/.lake/cache/outputs").exists())
 
     def test_upstreams_without_cache_endpoints_are_not_fetched(self):
         out, argv, github_env, _ = self.run_get([{"repo": "dep/Upstream", "package": "Upstream"}])

@@ -84,13 +84,31 @@ discard_cache() {
 MISS_RE='no outputs found|outputs not found for revision'
 # Three attempts are enough now that each retry fetches only artifacts still missing rather than
 # throwing away and redownloading the whole cache.
-ATTEMPTS=3
+# A dependency's cache (dependency-cache-get.py) can ask for more attempts with growing delays
+# (LAKE_CACHE_ATTEMPTS, LAKE_CACHE_RETRY_DELAY seconds, multiplied by LAKE_CACHE_RETRY_GROWTH after
+# each attempt), and for LAKE_CACHE_INCOMPLETE=prune, which keeps every verified artifact and drops
+# only the mappings whose artifacts never arrived, so just those modules build from source. Unset,
+# all of this behaves as before.
+ATTEMPTS="${LAKE_CACHE_ATTEMPTS:-3}"
+RETRY_DELAY="${LAKE_CACHE_RETRY_DELAY:-2}"
+RETRY_GROWTH="${LAKE_CACHE_RETRY_GROWTH:-1}"
+INCOMPLETE="${LAKE_CACHE_INCOMPLETE:-discard}"
+for value in "$ATTEMPTS" "$RETRY_DELAY" "$RETRY_GROWTH"; do
+  case "$value" in
+    ''|*[!0-9]*) echo "::error::LAKE_CACHE_ATTEMPTS, _RETRY_DELAY and _RETRY_GROWTH must be natural numbers"; exit 1 ;;
+  esac
+done
+[ "$ATTEMPTS" -ge 1 ] || { echo "::error::LAKE_CACHE_ATTEMPTS must be at least 1"; exit 1; }
+case "$INCOMPLETE" in
+  discard|prune) ;;
+  *) echo "::error::LAKE_CACHE_INCOMPLETE must be discard or prune"; exit 1 ;;
+esac
 LOG_INDEX=0
 
 # lookup LABEL LAKE-ARG...: run `lake cache get` with up to $ATTEMPTS attempts and set $outcome
 # to clean, miss or failed. A miss stops at once; a transfer failure retries over the same cache.
 lookup() {
-  local label="$1" attempt rc started
+  local label="$1" attempt rc started delay="$RETRY_DELAY"
   shift
   outcome=failed
   for attempt in $(seq 1 $ATTEMPTS); do
@@ -120,7 +138,8 @@ lookup() {
       echo "::notice::lake cache get attempt $attempt of $ATTEMPTS did not complete cleanly; retaining verified artifacts and retrying missing ones"
       # Give a transient connection failure a brief backoff. Lake has waited for curl to exit and
       # has removed or left uninstalled any invalid temporary artifacts before returning.
-      sleep 2
+      sleep "$delay"
+      delay=$((delay * RETRY_GROWTH))
     fi
   done
 }
@@ -149,6 +168,16 @@ if [ "$outcome" = miss ]; then
 fi
 clean=0
 if [ "$outcome" = clean ]; then clean=1; fi
+# A transfer that stayed incomplete keeps what it verified under LAKE_CACHE_INCOMPLETE=prune:
+# dropping the mappings whose artifacts are missing leaves no unresolvable entry for `--iofail`,
+# so Lake rebuilds only those modules instead of the whole package.
+if [ "$outcome" = failed ] && [ "$INCOMPLETE" = prune ]; then
+  if python3 "$(dirname -- "${BASH_SOURCE[0]}")/lake_cache_prune.py" "$PROJECT_DIR/.lake/cache"; then
+    clean=1
+  else
+    echo "::warning::pruning the incomplete cache failed; discarding it instead"
+  fi
+fi
 
 if [ "$clean" = 1 ]; then
   echo 'Lake cache: verified artifacts available; incremental build enabled'
