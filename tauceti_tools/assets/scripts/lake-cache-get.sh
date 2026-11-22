@@ -86,16 +86,17 @@ MISS_RE='no outputs found|outputs not found for revision'
 # throwing away and redownloading the whole cache.
 # A dependency's cache (dependency-cache-get.py) can ask for more attempts with growing delays
 # (LAKE_CACHE_ATTEMPTS, LAKE_CACHE_RETRY_DELAY seconds, multiplied by LAKE_CACHE_RETRY_GROWTH after
-# each attempt), and for LAKE_CACHE_INCOMPLETE=prune, which keeps every verified artifact and drops
+# each attempt up to LAKE_CACHE_RETRY_MAX_DELAY seconds, 0 for no cap), and for LAKE_CACHE_INCOMPLETE=prune, which keeps every verified artifact and drops
 # only the mappings whose artifacts never arrived, so just those modules build from source. Unset,
 # all of this behaves as before.
 ATTEMPTS="${LAKE_CACHE_ATTEMPTS:-3}"
 RETRY_DELAY="${LAKE_CACHE_RETRY_DELAY:-2}"
 RETRY_GROWTH="${LAKE_CACHE_RETRY_GROWTH:-1}"
+RETRY_MAX_DELAY="${LAKE_CACHE_RETRY_MAX_DELAY:-0}"
 INCOMPLETE="${LAKE_CACHE_INCOMPLETE:-discard}"
-for value in "$ATTEMPTS" "$RETRY_DELAY" "$RETRY_GROWTH"; do
+for value in "$ATTEMPTS" "$RETRY_DELAY" "$RETRY_GROWTH" "$RETRY_MAX_DELAY"; do
   case "$value" in
-    ''|*[!0-9]*) echo "::error::LAKE_CACHE_ATTEMPTS, _RETRY_DELAY and _RETRY_GROWTH must be natural numbers"; exit 1 ;;
+    ''|*[!0-9]*) echo "::error::LAKE_CACHE_ATTEMPTS, _RETRY_DELAY, _RETRY_GROWTH and _RETRY_MAX_DELAY must be natural numbers"; exit 1 ;;
   esac
 done
 [ "$ATTEMPTS" -ge 1 ] || { echo "::error::LAKE_CACHE_ATTEMPTS must be at least 1"; exit 1; }
@@ -140,6 +141,7 @@ lookup() {
       # has removed or left uninstalled any invalid temporary artifacts before returning.
       sleep "$delay"
       delay=$((delay * RETRY_GROWTH))
+      if [ "$RETRY_MAX_DELAY" != 0 ] && [ "$delay" -gt "$RETRY_MAX_DELAY" ]; then delay=$RETRY_MAX_DELAY; fi
     fi
   done
 }

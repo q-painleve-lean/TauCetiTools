@@ -72,7 +72,7 @@ class DependencyCache(unittest.TestCase):
         bin_dir.mkdir()
         (bin_dir / "lake").write_text(FAKE_LAKE)
         (bin_dir / "lake").chmod(0o755)
-        (bin_dir / "sleep").write_text("#!/bin/sh\nexit 0\n")
+        (bin_dir / "sleep").write_text(f"#!/bin/sh\necho \"$1\" >> {self.root / 'sleeps'}\nexit 0\n")
         (bin_dir / "sleep").chmod(0o755)
         self.env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", RUNNER_TEMP=str(self.root),
                         FAKE_LAKE_ARGV=str(self.root / "argv"), FAKE_LAKE_CONFIG=str(self.root / "config"),
@@ -114,7 +114,9 @@ class DependencyCache(unittest.TestCase):
         # refusing some downloads.
         (self.root / "bin/lake").write_text(PARTIAL_LAKE)
         out, argv, github_env, _ = self.run_get([UPSTREAM])
-        self.assertEqual(len(argv), 5, out)
+        self.assertEqual(len(argv), 8, out)
+        sleeps = (self.root / "sleeps").read_text().split()
+        self.assertEqual(sleeps, ["30", "60", "120", "120", "120", "120", "120"])
         self.assertIn("dropped 1 whose artifacts are missing", out)
         outputs = self.root / "pr/.lake/cache/outputs/Upstream"
         self.assertTrue((outputs / f"{KEPT}.json").exists())

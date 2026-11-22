@@ -32,8 +32,8 @@ from urllib.parse import urlsplit
 SHA = re.compile(r"[0-9a-f]{40}")
 GET = Path(__file__).resolve().with_name("lake-cache-get.sh")
 DISABLE = ("LAKE_ARTIFACT_CACHE=false", "LAKE_RESTORE_ARTIFACTS=false", "LAKE_CACHE_DIR=")
-RETRY = {"LAKE_CACHE_ATTEMPTS": "5", "LAKE_CACHE_RETRY_DELAY": "30", "LAKE_CACHE_RETRY_GROWTH": "2",
-         "LAKE_CACHE_INCOMPLETE": "prune"}
+RETRY = {"LAKE_CACHE_ATTEMPTS": "8", "LAKE_CACHE_RETRY_DELAY": "30", "LAKE_CACHE_RETRY_GROWTH": "2",
+         "LAKE_CACHE_RETRY_MAX_DELAY": "120", "LAKE_CACHE_INCOMPLETE": "prune"}
 
 
 def endpoint(value):
@@ -95,7 +95,7 @@ def main(project: Path) -> None:
                        TAUCETI_CACHE_REPOSITORY=repo, LAKE_CACHE_PACKAGE=name, LAKE_CACHE_BASE_REV=rev,
                        LAKE_CACHE_MAX_REVS="1", LAKE_CACHE_DIR=str(cache), GITHUB_ENV=str(github_env),
                        # A public cache behind bot protection refuses bursts for a while. Keep every
-                       # verified artifact across attempts 30 s, 60 s, 120 s and 240 s apart, and if
+                       # verified artifact across eight attempts 30 s, 60 s, then 120 s apart (about 12 min), and if
                        # some still never arrive, build only those modules rather than the whole
                        # package (lake-cache-get.sh, LAKE_CACHE_INCOMPLETE=prune).
                        **RETRY)
