@@ -478,7 +478,10 @@ def write_project(project: Project, checkout: Path, role: str = "content") -> li
             and ".github/workflows" in relative.as_posix()
             and "__TOOLS_" not in text
         ):
-            text = add_setup_steps(text)
+            # A downstream keeps no shared scripts in its repository, so nightly-verify's two
+            # checkouts of main (`fresh`, the clean build, and `reference`, the cache-restored one)
+            # each need the setup step; Tau Ceti's own checkout carries its scripts.
+            text = add_setup_steps(text, checkout_paths=("gate",) if project.legacy else ("gate", "fresh", "reference"))
         tools = project.tool("tools")
         if tools.get("ref"):
             text = text.replace("__TOOLS_REPO__", tools["repo"]).replace("__TOOLS_REF__", tools["ref"])
@@ -508,7 +511,7 @@ def write_project(project: Project, checkout: Path, role: str = "content") -> li
     return written
 
 
-def add_setup_steps(text: str, *, source_mirror=False) -> str:
+def add_setup_steps(text: str, *, source_mirror=False, checkout_paths=("gate",)) -> str:
     """Attach shared setup to trusted project checkout steps in small caller workflows."""
     import re
 
@@ -530,7 +533,8 @@ def add_setup_steps(text: str, *, source_mirror=False) -> str:
             for token in ("head.sha", "headRef", "steps.pr.outputs", "path: pr\n", "path: base\n", "path: mergebase\n")
         ):
             continue
-        if "path:" in block and "path: gate\n" not in block:
+        directory = re.search(r"(?m)^ +path: *(\S+)", block)
+        if directory and directory[1] not in checkout_paths:
             continue
         step = """      - name: Prepare pinned shared tools
         uses: __TOOLS_REPO__/.github/actions/setup@__TOOLS_REF__
@@ -541,8 +545,8 @@ def add_setup_steps(text: str, *, source_mirror=False) -> str:
           source-mirror-enabled: __SOURCE_MIRROR_ENABLED__
 """
         step = step.replace("__SOURCE_MIRROR_ENABLED__", "true" if source_mirror else "false")
-        if "path: gate\n" in block:
-            step = step.replace("project-directory: .", "project-directory: gate")
+        if directory:
+            step = step.replace("project-directory: .", "project-directory: " + directory[1])
         step = "".join(
             indent + line[6:] if line.startswith("      ") else line for line in step.splitlines(keepends=True)
         )
