@@ -7,6 +7,7 @@ The service materializes only these facts; direct reads use the same reductions.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -130,13 +131,24 @@ def compact_meta(meta):
     return out
 
 
+def rebase_authors():
+    """Logins whose merge-queue recovery requests a worker acts on.
+
+    The contract names Tau Ceti's own automation. A downstream whose merge sweep posts as its own
+    App adds that login through the operator's worker configuration, TAUCETI_REBASE_AUTHORS
+    (comma-separated); unset, the contract's list is the whole set."""
+    extra = os.environ.get("TAUCETI_REBASE_AUTHORS", "")
+    return set(SPEC["rebase_authors"]) | {login.strip() for login in extra.split(",") if login.strip()}
+
+
 def rebase_heads(comments):
     heads = []
+    authors = rebase_authors()
     for c in comments or []:
         if not isinstance(c, dict) or not isinstance(c.get("body"), str):
             continue
         body = c.get("body") or ""
-        if (c.get("user") or {}).get("login") in SPEC["rebase_authors"] and body.startswith(
+        if (c.get("user") or {}).get("login") in authors and body.startswith(
             "Merge-queue recovery for head `"
         ):
             for line in body.splitlines():
