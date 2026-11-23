@@ -12,7 +12,8 @@ The properties that matter:
 * main restores its own newest bundle only together with nightly verification
   (`[features] security_audit`, TAUCETI_NIGHTLY_VERIFY=1), and nightly-verify compares its clean build
   with exactly the commit's bundle;
-* every workflow names a bundle with the same key, so changing one alone cannot silently miss.
+* every workflow names a bundle with the same key and path (actions/cache versions an entry by its
+  path), so changing one alone cannot silently miss.
 """
 
 from __future__ import annotations
@@ -225,14 +226,19 @@ class Workflows(unittest.TestCase):
         self.assertIn("steps.restore.outcome", steps[confirm]["run"])
 
     def test_every_workflow_names_a_bundle_the_same_way(self):
-        expressions = []
+        expressions, paths = [], set()
         for path in (ROOT / ".github/workflows/pr-build.yml", *PROJECT_WORKFLOWS.glob("*.yml")):
             for job in yaml.safe_load(path.read_text())["jobs"].values():
                 for step in job.get("steps", []):
+                    if str(step.get("with", {}).get("key", "")).startswith("lake-bundle-v2-"):
+                        # actions/cache derives an entry's version from its path, so a restore under
+                        # another path never matches a saved bundle, whatever the key.
+                        paths.add(step["with"]["path"])
                     for field in ("key", "restore-keys"):
                         value = str(step.get("with", {}).get(field, ""))
                         if value.startswith("lake-bundle-v2-"):
                             expressions.append((path.name, field, value))
+        self.assertEqual(paths, {"${{ runner.temp }}/lake-bundle"})
         shapes = set()
         for name, field, value in expressions:
             shape = re.sub(r"hashFiles\('(?:[a-z]+/)?", "hashFiles('", value)

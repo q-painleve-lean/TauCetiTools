@@ -239,13 +239,13 @@ jobs:
         if: ${{ env.TAUCETI_CACHE_CI_BUNDLE == '1' && env.TAUCETI_NIGHTLY_VERIFY == '1' && env.TAUCETI_CACHE_ENABLED != '1' }}
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.temp }}/lake-bundle-restore
+          path: ${{ runner.temp }}/lake-bundle
           key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-${{ github.sha }}
           restore-keys: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-
 
       - name: Install main's CI bundle into the Lake cache
         if: ${{ steps.lake_bundle_restore.outputs.cache-matched-key != '' }}
-        run: bash scripts/lake-cache-bundle.sh restore . "$RUNNER_TEMP/lake-bundle-restore"
+        run: bash scripts/lake-cache-bundle.sh restore . "$RUNNER_TEMP/lake-bundle"
 
       - name: Audit import headers against the complete source inventory
         run: python3 scripts/check-imports.py
