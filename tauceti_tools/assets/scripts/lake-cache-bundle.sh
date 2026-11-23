@@ -7,19 +7,22 @@
 # Usage: bash scripts/lake-cache-bundle.sh save    <project-dir> <bundle-dir>
 #        bash scripts/lake-cache-bundle.sh restore <project-dir> <bundle-dir>
 #
-# save    Main CI only, after its from-source build and audits. Packs the built outputs into the
+# save    Main CI only, after its build and audits. Packs the built outputs into the
 #         local Lake cache (no recompile), emits the root package's input->output map and copies
 #         exactly those records and archives to <bundle-dir> with `lake cache stage`. A bundle
 #         larger than LAKE_BUNDLE_LIMIT_BYTES (default 256 MiB) is dropped with a warning, and the
 #         step output saved=false tells the workflow not to upload it.
-# restore PR, merge-queue and full-lint builds, before any candidate code runs. Copies a bundle
-#         the workflow restored to <bundle-dir> back into <project-dir>/.lake/cache with
+# restore PR, merge-queue, full-lint and main builds, and nightly-verify's reference build, before
+#         any candidate code runs. Copies a bundle the workflow restored to <bundle-dir> back into
+#         <project-dir>/.lake/cache with
 #         `lake cache unstage`, drops any record whose archive did not arrive, and enables the
 #         artifact cache for the offline build. Lake still compares every module's input hash, so
 #         only unchanged modules restore; the rest build from source. No bundle, or a failed
 #         unstage, leaves the build exactly as without this step.
 #
-# Main never restores its own bundle: it stays the from-source build every bundle comes from.
+# Main restores its newest bundle only while nightly verification runs (`[features] security_audit`).
+# In place of a from-source build on every push, nightly-verify.yml rebuilds main from source once a
+# day and compares the result with that commit's bundle (see ci.yml).
 set -euo pipefail
 
 ACTION="${1:?usage: lake-cache-bundle.sh save|restore <project-dir> <bundle-dir>}"

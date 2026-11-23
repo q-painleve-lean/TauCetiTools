@@ -224,10 +224,28 @@ jobs:
 
       # Pinned upstream packages (an `[[upstreams]]` entry with cache endpoints) restore from
       # their own public caches, as in pr-build. Without it main compiles all of each such package
-      # on every push. The root package is never restored here: main stays the from-source build
-      # that CI bundles and published caches come from.
+      # on every push.
       - name: Fetch pinned upstream packages' oleans from their Lake caches
         run: python3 scripts/dependency-cache-get.py .
+
+      # `[services.cache] ci_bundle = true` without a published cache: restore the root package's
+      # outputs from main's newest CI bundle, which only this job writes, and build incrementally, as
+      # the published-cache restore above does. Restoring on main gives up main's role as the one
+      # build that takes nothing on faith; nightly-verify.yml reinstates it daily, rebuilding from
+      # source and comparing against that commit's bundle. The two are a pair: without nightly
+      # verification (`[features] security_audit`, TAUCETI_NIGHTLY_VERIFY) main builds from source.
+      - name: Restore the project's own oleans from main's CI bundle
+        id: lake_bundle_restore
+        if: ${{ env.TAUCETI_CACHE_CI_BUNDLE == '1' && env.TAUCETI_NIGHTLY_VERIFY == '1' && env.TAUCETI_CACHE_ENABLED != '1' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/lake-bundle-restore
+          key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}-${{ hashFiles('lake-manifest.json') }}-
+
+      - name: Install main's CI bundle into the Lake cache
+        if: ${{ steps.lake_bundle_restore.outputs.cache-matched-key != '' }}
+        run: bash scripts/lake-cache-bundle.sh restore . "$RUNNER_TEMP/lake-bundle-restore"
 
       - name: Audit import headers against the complete source inventory
         run: python3 scripts/check-imports.py
@@ -311,9 +329,10 @@ jobs:
       # artifacts, and publish-lake-cache below, a fresh runner with only a sparse pin/helper
       # checkout and no project workspace, is the only place the key exists. The helper stays
       # inert until the key-bearing step has exited.
-      # `[services.cache] ci_bundle = true`: save this commit's own outputs for PR, merge-queue and
-      # full-lint builds to restore (lake-cache-bundle.sh). Only this trusted post-merge build
-      # writes bundles; the prune-lake-bundles job keeps the newest three.
+      # `[services.cache] ci_bundle = true`: save this commit's own outputs for PR, merge-queue,
+      # full-lint and later main builds to restore, and for nightly-verify.yml to compare against
+      # (lake-cache-bundle.sh). Only this trusted post-merge build writes bundles; the
+      # prune-lake-bundles job keeps the newest three.
       - name: Pack this commit's own oleans into a CI bundle
         id: lake_bundle
         if: ${{ env.TAUCETI_CACHE_CI_BUNDLE == '1' }}

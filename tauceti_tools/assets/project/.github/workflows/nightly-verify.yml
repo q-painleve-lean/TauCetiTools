@@ -371,10 +371,28 @@ jobs:
               echo "LAKE_RESTORE_ARTIFACTS=true"
             } >> "$GITHUB_ENV"
             echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "source=endpoints" >> "$GITHUB_OUTPUT"
+          elif [ "${TAUCETI_CACHE_CI_BUNDLE:-}" = 1 ]; then
+            # `[services.cache] ci_bundle = true` and no published cache: compare against the bundle
+            # main CI saved for this commit (lake-cache-bundle.sh). Its restore sets the Lake
+            # variables only once the bundle is in place, so a missing bundle reads as no restore.
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "source=bundle" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Lake cache endpoints not configured — the comparison will report inconclusive"
           fi
+
+      # Exactly this commit's bundle, never the newest by prefix: another commit's outputs would be
+      # judged against this commit's clean build, and the comparison would mean nothing.
+      - name: Fetch main's CI bundle for this commit
+        id: bundle_fetch
+        if: ${{ steps.refcfg.outputs.source == 'bundle' }}
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/lake-bundle
+          key: lake-bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('reference/lean-toolchain') }}-${{ hashFiles('reference/lake-manifest.json') }}-${{ steps.rev.outputs.sha }}
 
       - name: Restore what the cache serves for this commit
         id: restore
@@ -383,7 +401,13 @@ jobs:
         env:
           PUBLIC_ARTIFACT_ENDPOINT: ${{ vars.LAKE_CACHE_ARTIFACT_ENDPOINT_PUBLIC }}
           PUBLIC_REVISION_ENDPOINT: ${{ vars.LAKE_CACHE_REVISION_ENDPOINT_PUBLIC }}
-        run: bash reference/scripts/lake-cache-get.sh reference
+          SOURCE: ${{ steps.refcfg.outputs.source }}
+        run: |
+          if [ "$SOURCE" = bundle ]; then
+            bash reference/scripts/lake-cache-bundle.sh restore reference "$RUNNER_TEMP/lake-bundle"
+          else
+            bash reference/scripts/lake-cache-get.sh reference
+          fi
 
       # The step above falls back to LAKE_ARTIFACT_CACHE=false when it cannot get a whole cache,
       # which would leave the reference workspace building from source. Comparing that against the

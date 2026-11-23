@@ -217,6 +217,9 @@ class Project:
             # Independent of the cache service mode: main CI saves the root package's outputs to
             # one GitHub Actions cache bundle and PR, merge-queue and full-lint builds restore it.
             "TAUCETI_CACHE_CI_BUNDLE": "1" if cache.get("ci_bundle") is True else "",
+            # Nightly verification (nightly-verify.yml, `[features] security_audit`). Main CI restores
+            # its own CI bundle only while it runs: the two are a pair, as for the published cache.
+            "TAUCETI_NIGHTLY_VERIFY": "1" if self.feature("security_audit") else "",
         }
 
     def environment(self) -> dict[str, str]:

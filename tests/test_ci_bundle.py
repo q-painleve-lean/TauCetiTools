@@ -8,12 +8,17 @@ The properties that matter:
 * restore unstages with `lake cache unstage`, drops records whose archives are missing, enables the
   artifact cache, and is a no-op without a bundle;
 * only main's build job saves, only a job that runs no project code may delete caches, and PR and
-  full-lint builds restore after the dependency caches and before building.
+  full-lint builds restore after the dependency caches and before building;
+* main restores its own newest bundle only together with nightly verification
+  (`[features] security_audit`, TAUCETI_NIGHTLY_VERIFY=1), and nightly-verify compares its clean build
+  with exactly the commit's bundle;
+* every workflow names a bundle with the same key, so changing one alone cannot silently miss.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -66,6 +71,17 @@ class Configuration(unittest.TestCase):
             env = load(str(config)).environment()
         self.assertEqual(env["TAUCETI_CACHE_CI_BUNDLE"], "1")
         self.assertEqual(env["TAUCETI_CACHE_ARTIFACT_URL"], "")
+
+
+class NightlyPairing(unittest.TestCase):
+    def test_nightly_verify_follows_security_audit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "tauceti.toml"
+            text = initial_configuration("one/Project", "human")
+            config.write_text(text)
+            self.assertEqual(load(str(config)).environment()["TAUCETI_NIGHTLY_VERIFY"], "")
+            config.write_text(text.replace("security_audit = false", "security_audit = true"))
+            self.assertEqual(load(str(config)).environment()["TAUCETI_NIGHTLY_VERIFY"], "1")
 
 
 class Script(unittest.TestCase):
@@ -151,7 +167,8 @@ class Workflows(unittest.TestCase):
         steps = build["steps"]
         dependency = self.index(steps, "dependency-cache-get.py .")
         main_build = next(i for i, step in enumerate(steps) if step.get("name") == "Build")
-        save = self.index(steps, "lake-bundle-v2-")
+        save = next(i for i, step in enumerate(steps) if step.get("uses", "").startswith("actions/cache/save@")
+                    and "lake-bundle-v2-" in str(step.get("with", "")))
         self.assertLess(dependency, main_build)
         self.assertLess(main_build, save)
         self.assertTrue(steps[save]["uses"].startswith("actions/cache/save@"))
@@ -169,6 +186,60 @@ class Workflows(unittest.TestCase):
         self.assertLess(self.index(steps, "dependency-cache-get.py ."), restore)
         self.assertLess(restore, build)
         self.assertTrue(steps[restore]["uses"].startswith("actions/cache/restore@"))
+
+    def test_main_restores_its_own_bundle_only_with_nightly_verification(self):
+        steps = self.steps(PROJECT_WORKFLOWS / "ci.yml", "build")
+        restore = next(i for i, step in enumerate(steps) if step.get("uses", "").startswith("actions/cache/restore@")
+                       and "lake-bundle-v2-" in str(step.get("with", "")))
+        install = self.index(steps, "lake-cache-bundle.sh restore .")
+        main_build = next(i for i, step in enumerate(steps) if step.get("name") == "Build")
+        self.assertLess(self.index(steps, "dependency-cache-get.py ."), restore)
+        self.assertLess(restore, install)
+        self.assertLess(install, main_build)
+        condition = steps[restore]["if"]
+        for term in ("TAUCETI_CACHE_CI_BUNDLE == '1'", "TAUCETI_NIGHTLY_VERIFY == '1'", "TAUCETI_CACHE_ENABLED != '1'"):
+            self.assertIn(term, condition)
+        self.assertIn("restore-keys", steps[restore]["with"])
+        self.assertIn(steps[restore]["id"], steps[install]["if"])
+
+    def test_nightly_compares_with_exactly_this_commits_bundle(self):
+        steps = self.steps(PROJECT_WORKFLOWS / "nightly-verify.yml", "verify")
+        names = [step.get("name") for step in steps]
+        refcfg = names.index("Configure the Lake artifact cache for the reference build")
+        fetch = names.index("Fetch main's CI bundle for this commit")
+        restore = names.index("Restore what the cache serves for this commit")
+        confirm = names.index("Confirm the reference workspace really restored from the cache")
+        self.assertLess(refcfg, fetch)
+        self.assertLess(fetch, restore)
+        self.assertLess(restore, confirm)
+        self.assertIn("source=bundle", steps[refcfg]["run"])
+        self.assertIn('TAUCETI_CACHE_CI_BUNDLE:-}" = 1', steps[refcfg]["run"])
+        fetched = steps[fetch]
+        self.assertTrue(fetched["uses"].startswith("actions/cache/restore@"))
+        self.assertNotIn("restore-keys", fetched["with"])
+        self.assertTrue(fetched["with"]["key"].endswith("-${{ steps.rev.outputs.sha }}"))
+        self.assertEqual(fetched["if"], "${{ steps.refcfg.outputs.source == 'bundle' }}")
+        self.assertIn('lake-cache-bundle.sh restore reference "$RUNNER_TEMP/lake-bundle"', steps[restore]["run"])
+        self.assertIn("lake-cache-get.sh reference", steps[restore]["run"])
+        self.assertEqual(steps[restore]["id"], "restore")
+        self.assertIn("steps.restore.outcome", steps[confirm]["run"])
+
+    def test_every_workflow_names_a_bundle_the_same_way(self):
+        expressions = []
+        for path in (ROOT / ".github/workflows/pr-build.yml", *PROJECT_WORKFLOWS.glob("*.yml")):
+            for job in yaml.safe_load(path.read_text())["jobs"].values():
+                for step in job.get("steps", []):
+                    for field in ("key", "restore-keys"):
+                        value = str(step.get("with", {}).get(field, ""))
+                        if value.startswith("lake-bundle-v2-"):
+                            expressions.append((path.name, field, value))
+        shapes = set()
+        for name, field, value in expressions:
+            shape = re.sub(r"hashFiles\('(?:[a-z]+/)?", "hashFiles('", value)
+            shape = re.sub(r"\$\{\{ (?:github\.sha|steps\.rev\.outputs\.sha) \}\}$", "<sha>", shape)
+            shapes.add(shape if field == "key" else shape + "<sha>")
+        self.assertGreaterEqual(len(expressions), 7)
+        self.assertEqual(len(shapes), 1, shapes)
 
 
 if __name__ == "__main__":
