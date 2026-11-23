@@ -447,6 +447,8 @@ def write_project(project: Project, checkout: Path, role: str = "content") -> li
         }
         if relative.name in optional and not project.feature(optional[relative.name]):
             continue
+        if relative.name == "toolchain-tags.yml" and not project.legacy and not project.feature("zulip"):
+            continue  # It only posts to Zulip; without Zulip it can only fail on toolchain bumps.
         if relative.name == "pages.yml" and not project.legacy:
             continue  # The downstream API workflow also deploys its Pages artifact.
         if relative.name == "prepare_docs.py" and project.legacy:
