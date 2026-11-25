@@ -284,7 +284,8 @@ def render(text: str, project: Project, *, source_ci=False, qualified=False) -> 
             r"\bTauCeti\b"
             if key == "TauCeti"
             else re.escape(key) + r"(?![A-Za-z0-9_-])"
-            if key in {CANONICAL, "https://github.com/" + CANONICAL}
+            # A complete name: `TauCeti must not take the start of `TauCetiProject/TauCeti.
+            if key in {CANONICAL, "https://github.com/" + CANONICAL, "`TauCeti"}
             else re.escape(key)
             for key in sorted(pairs, key=len, reverse=True)
         )
